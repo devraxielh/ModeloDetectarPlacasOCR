@@ -8,9 +8,11 @@ from fastapi.responses import JSONResponse
 from pathlib import Path
 from ollama_utils import OllamaClient
 from PIL import Image
-
+import torch
+device = "cuda" if torch.cuda.is_available() else "cpu"
+print(device)
 app = FastAPI()
-model = YOLO("runs/detect/detectorplaca/weights/best.pt").to("cpu")
+model = YOLO("runs/detect/detectorplaca/weights/best.pt").to(device)
 ollama_client = OllamaClient()
 
 OUTPUT_FOLDER = "./output"
@@ -40,7 +42,7 @@ async def process_video(file: UploadFile = File(...)):
             if not ret:
                 break
             if frame_count % 10 == 0:
-                results = model(frame, device=-1, conf=0.70)
+                results = model(frame, conf=0.70 ,device=device)
                 for r in results:
                     frame = r.plot()
                     for i, box in enumerate(r.boxes.xyxy):
@@ -77,7 +79,7 @@ async def process_image(file: UploadFile = File(...)):
         frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         if frame is None:
             return JSONResponse(status_code=400, content={"error": "No se pudo cargar la imagen."})
-        results = model(frame, device=-1, conf=0.70)
+        results = model(frame, device=device, conf=0.70)
         detections = []
         for r in results:
             for i, box in enumerate(r.boxes.xyxy):
@@ -114,3 +116,44 @@ def extract_plate_text(detections):
             except requests.exceptions.RequestException as e:
                 ollama_responses[image_path] = f"Error en la conexión a Ollama: {str(e)}"
     return best_plate, plate_text, ollama_responses
+
+@app.post("/detect_and_crop/")
+async def detect_and_crop(file: UploadFile = File(...)):
+    try:
+        file_path = os.path.join(OUTPUT_FOLDER, file.filename)
+        with open(file_path, "wb") as f:
+            f.write(await file.read())
+        
+        frame = cv2.imread(file_path)
+        if frame is None:
+            return JSONResponse(status_code=400, content={"error": "No se pudo cargar la imagen."})
+        
+        results = model(frame, conf=0.70, device='cpu')
+        detections = []
+        
+        for r in results:
+            for i, box in enumerate(r.boxes.xyxy):
+                x1, y1, x2, y2 = map(int, box.tolist())
+                x1, y1, x2, y2 = max(0, x1), max(0, y1), min(frame.shape[1], x2), min(frame.shape[0], y2)
+                if x2 > x1 and y2 > y1:
+                    cropped = frame[y1:y2, x1:x2].copy()
+                    crop_path = os.path.join(OUTPUT_FOLDER, f"detection_{file.filename}")
+                    cv2.imwrite(crop_path, cropped)
+                    detections.append(crop_path)
+        
+        if not detections:
+            return JSONResponse(content={"message": "No se detectaron objetos válidos."})
+        
+        return JSONResponse(content={
+            "message": "Detección completada",
+            "detections": detections
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
+@app.get("/show_crop/{image_name}")
+async def show_crop(image_name: str):
+    image_path = os.path.join(OUTPUT_FOLDER, image_name)
+    if os.path.exists(image_path):
+        return FileResponse(image_path)
+    return JSONResponse(status_code=404, content={"error": "Imagen no encontrada."})

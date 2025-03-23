@@ -16,7 +16,7 @@ class OllamaClient:
         default_prompt = "Analyze the image and extract only the vehicle's license plate number. Provide no additional details or context."
         final_prompt = prompt if prompt else default_prompt
         payload = {
-            "model": "gemma3:12b",
+            "model": "gemma3:4b",
             "prompt": final_prompt,
             "images": [base64_image],
             "stream": False
