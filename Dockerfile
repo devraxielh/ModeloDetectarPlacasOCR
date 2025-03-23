@@ -1,16 +1,16 @@
-# Usa una imagen base con Python
+# Imagen base con Python y OpenCV
 FROM python:3.9
 
-# Define el directorio de trabajo dentro del contenedor
+# Establecer directorio de trabajo
 WORKDIR /app
 
-# Copia todos los archivos a la imagen del contenedor
-COPY . /app
+# Copiar archivos de la aplicación
+COPY app.py ollama_utils.py best.pt requirements.txt ./
 
-# Instala dependencias
+# Instalar dependencias
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Exponer el puerto en el que corre FastAPI
+# Exponer puerto para FastAPI
 EXPOSE 8000
 
 # Comando para ejecutar la aplicación
