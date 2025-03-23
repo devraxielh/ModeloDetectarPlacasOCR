@@ -1,0 +1,6 @@
+path: g:\Mi unidad\ProyectosIA\Modelo para Detectar Placas\data
+train: train/images
+val: validation/images
+nc: 1
+names:
+- placa
