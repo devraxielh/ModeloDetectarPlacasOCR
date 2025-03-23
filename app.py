@@ -10,7 +10,7 @@ from ollama_utils import OllamaClient
 from PIL import Image
 
 app = FastAPI()
-model = YOLO("runs/detect/detectorplaca/weights/best.pt")
+model = YOLO("runs/detect/detectorplaca/weights/best.pt").to("cpu")
 ollama_client = OllamaClient()
 
 OUTPUT_FOLDER = "./output"
@@ -40,7 +40,7 @@ async def process_video(file: UploadFile = File(...)):
             if not ret:
                 break
             if frame_count % 10 == 0:
-                results = model(frame, device=0, conf=0.70)
+                results = model(frame, device=-1, conf=0.70)
                 for r in results:
                     frame = r.plot()
                     for i, box in enumerate(r.boxes.xyxy):
@@ -77,7 +77,7 @@ async def process_image(file: UploadFile = File(...)):
         frame = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
         if frame is None:
             return JSONResponse(status_code=400, content={"error": "No se pudo cargar la imagen."})
-        results = model(frame, device=0, conf=0.70)
+        results = model(frame, device=-1, conf=0.70)
         detections = []
         for r in results:
             for i, box in enumerate(r.boxes.xyxy):
