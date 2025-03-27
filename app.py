@@ -4,7 +4,7 @@ import numpy as np
 import os
 import requests
 from ultralytics import YOLO
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, FileResponse
 from pathlib import Path
 from ollama_utils import OllamaClient
 from PIL import Image
@@ -117,33 +117,42 @@ def extract_plate_text(detections):
                 ollama_responses[image_path] = f"Error en la conexión a Ollama: {str(e)}"
     return best_plate, plate_text, ollama_responses
 
+def process_frame(frame, frame_idx):
+    """Procesa un frame y extrae detecciones."""
+    results = model(frame, conf=0.70, device="cpu")
+    detections = []
+
+    for r in results:
+        for i, box in enumerate(r.boxes.xyxy):
+            x1, y1, x2, y2 = map(int, box.tolist())
+            x1, y1, x2, y2 = max(0, x1), max(0, y1), min(frame.shape[1], x2), min(frame.shape[0], y2)
+
+            if x2 > x1 and y2 > y1:
+                cropped = frame[y1:y2, x1:x2].copy()
+                crop_filename = f"detection_crop_{frame_idx}_{i}.jpg"
+                crop_path = os.path.join(OUTPUT_FOLDER, crop_filename)
+                cv2.imwrite(crop_path, cropped)
+                detections.append(f"/show_crop/{crop_filename}")
+
+    return detections
+
 @app.post("/detect_and_crop/")
 async def detect_and_crop(file: UploadFile = File(...)):
+    """Procesa imágenes y recorta las detecciones."""
     try:
         file_path = os.path.join(OUTPUT_FOLDER, file.filename)
         with open(file_path, "wb") as f:
             f.write(await file.read())
-        
+
         frame = cv2.imread(file_path)
         if frame is None:
             return JSONResponse(status_code=400, content={"error": "No se pudo cargar la imagen."})
-        
-        results = model(frame, conf=0.70, device='cpu')
-        detections = []
-        
-        for r in results:
-            for i, box in enumerate(r.boxes.xyxy):
-                x1, y1, x2, y2 = map(int, box.tolist())
-                x1, y1, x2, y2 = max(0, x1), max(0, y1), min(frame.shape[1], x2), min(frame.shape[0], y2)
-                if x2 > x1 and y2 > y1:
-                    cropped = frame[y1:y2, x1:x2].copy()
-                    crop_path = os.path.join(OUTPUT_FOLDER, f"detection_{file.filename}")
-                    cv2.imwrite(crop_path, cropped)
-                    detections.append(crop_path)
-        
+
+        detections = process_frame(frame, 0)
+
         if not detections:
             return JSONResponse(content={"message": "No se detectaron objetos válidos."})
-        
+
         return JSONResponse(content={
             "message": "Detección completada",
             "detections": detections
@@ -151,8 +160,48 @@ async def detect_and_crop(file: UploadFile = File(...)):
     except Exception as e:
         return JSONResponse(status_code=500, content={"error": str(e)})
 
+@app.post("/detect_and_crop_video/")
+async def detect_and_crop_video(file: UploadFile = File(...)):
+    """Procesa videos y recorta las detecciones en frames seleccionados."""
+    try:
+        video_path = os.path.join(OUTPUT_FOLDER, file.filename)
+        with open(video_path, "wb") as f:
+            f.write(await file.read())
+
+        cap = cv2.VideoCapture(video_path)
+        if not cap.isOpened():
+            return JSONResponse(status_code=400, content={"error": "No se pudo abrir el video."})
+
+        frame_idx = 0
+        detections = []
+        fps = int(cap.get(cv2.CAP_PROP_FPS))
+
+        while cap.isOpened():
+            ret, frame = cap.read()
+            if not ret:
+                break
+
+            if frame_idx % (fps // 2) == 0:  # Procesar cada medio segundo para optimización
+                frame_detections = process_frame(frame, frame_idx)
+                detections.extend(frame_detections)
+
+            frame_idx += 1
+
+        cap.release()
+
+        if not detections:
+            return JSONResponse(content={"message": "No se detectaron objetos válidos en el video."})
+
+        return JSONResponse(content={
+            "message": "Procesamiento de video completado",
+            "detections": detections
+        })
+    except Exception as e:
+        return JSONResponse(status_code=500, content={"error": str(e)})
+
 @app.get("/show_crop/{image_name}")
 async def show_crop(image_name: str):
+    """Muestra las imágenes recortadas."""
     image_path = os.path.join(OUTPUT_FOLDER, image_name)
     if os.path.exists(image_path):
         return FileResponse(image_path)
